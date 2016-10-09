@@ -1,6 +1,6 @@
 # README #
 
-nrd2dat is a utility for converting Neuralynx raw data ".nrd" files to the flat binary ".dat" format required used in spike sorting packages such as Klusta, Kilosort and Phy.  It uses buffered IO streams for fast reading and writing of large data files.  The speed of your hard drive will likely be the limiting factor for performance.  A 300 GB file is typically processed in ~1 hour on my (fairly slow) system.  Error-checking is performed to ensure records have been read correctly from the raw data file.
+nrd2dat is a utility for converting Neuralynx raw data ".nrd" files to the flat binary ".dat" format used by spike sorting packages such as Klusta, Kilosort and Phy.  It uses buffered IO streams for fast reading and writing of large data files.  The speed of your hard drive will likely be the limiting factor for performance.  A 300 GB  .nrd file is typically processed in ~1 hour on my (fairly slow) system.  Error-checking is performed to ensure records have been read correctly from the raw data file.
 
 ### USAGE ###
 
