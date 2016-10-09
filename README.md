@@ -28,11 +28,11 @@ The output is a pair of .dat files whose names begin with the base name of the i
 53  
 52  
 
-%TT3
-15
-14
-13
-12
+%TT3  
+15  
+14  
+13  
+12  
 
 */
 
