@@ -16,17 +16,17 @@ The output is a pair of .dat files whose names begin with the base name of the i
 
 ###EXAMPLE CHANNEL MAP (corresponding to tetrodes 1, 2 and 3 on the HS54 headstage):###
 
-% TT1
-40
-41
-42
-43
+% TT1  
+40  
+41  
+42  
+43  
 
-%TT2
-55
-54
-53
-52
+%TT2  
+55  
+54  
+53  
+52  
 
 %TT3
 15
