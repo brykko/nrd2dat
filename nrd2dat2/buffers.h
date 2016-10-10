@@ -20,7 +20,7 @@ protected:
 
 public:
 
-	Buffer() {}
+	Buffer(): bytes() {}
 
 
 	streamoff getPositionInFile() {
@@ -93,9 +93,11 @@ private:
 
 public:
 
-	ReadBuffer() : Buffer() {}
+	ReadBuffer() : Buffer() {
+		stream = 0;
+	}
 
-	ReadBuffer(ifstream& str) {
+	explicit ReadBuffer(ifstream& str) {
 
 		stream = &str;
 
@@ -245,9 +247,11 @@ private:
 
 public:
 
-	WriteBuffer() : Buffer() {}
+	WriteBuffer() : Buffer() {
+		stream = 0;
+	}
 
-	WriteBuffer(ofstream& str) {
+	explicit WriteBuffer(ofstream& str) {
 		stream = &str;
 		// Get current position and length of file
 		filePos = stream->tellp();
