@@ -13,7 +13,8 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{511E483A-62C2-45F3-85E8-16E8CB4D841E}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>nrd2dat2</RootNamespace>
+    <RootNamespace>nrd2dat</RootNamespace>
+    <ProjectName>nrd2dat</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -85,7 +86,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="nrd2dat2.cpp" />
+    <ClCompile Include="nrd2dat.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
