@@ -12,18 +12,19 @@
 #include "buffers.h"
 #include "filters.h"
 
-
-#define SAMPLE_SCALE_FACTOR 0.5f  // samples are multipled by this before conversion to int16, to prevent clipping
+// DSP consts
+#define SAMPLE_SCALE_FACTOR 0.5f   // samples are multipled by this before conversion to int16, to prevent clipping
 #define RESONANCE 1.414213562373f  // pi = lowest possible resonance
 #define SAMPLE_RATE 32000		   // necessary for calculating filter params
 #define HPF_CUTOFF 100.0f		   // set cutoff for HPF applied to samples
 
-#define BUFFER_SIZE 65536		  // set size of buffer used by IO streams
-#define RECORD_LIMIT 0			  // limit processing to a fixed number of records
-#define RECORD_STX 2048			  // value of STX field at position 0 in each record
-#define RECORD_SIZE 584			  // record size in bytes
-#define NUM_CHANNELS_TOTAL 128	  // number of channels saved to NRD file
-#define HEADER_FIELDS 17		  // number of header (pre-data-packet) fields in each record
+// File format consts
+#define BUFFER_SIZE 65536		   // set size of buffer used by IO streams
+#define RECORD_LIMIT 0			   // limit processing to a fixed number of records
+#define RECORD_STX 2048			   // value of STX field at position 0 in each record
+#define RECORD_SIZE 584			   // record size in bytes
+#define NUM_CHANNELS_TOTAL 128	   // number of channels saved to NRD file
+#define HEADER_FIELDS 17		   // number of header (pre-data-packet) fields in each record
 
 
 /*
@@ -37,10 +38,12 @@ __int32 getInt32(char* buff, int idx);
 string makeOutputBaseFileName(string& inputFileName);
 string makeOutputSamplesFileName(string& inputFileName);
 string makeOutputTimestampsFileName(string& inputFileName);
+string makeOutputTtlFileName(string& inputFileName);
 
 // Channel map reader
 vector<int> readChannelMap(char* fileName);
 
+// Returns true if a string represents a scalar number
 bool isNumber(const std::string& s);
 
 // (For debugging)
@@ -59,21 +62,28 @@ __int32 CRC(char* buff);
 // Filter one data sample
 void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex);
 
-// Some global vars
+/*
+GLOBALS
+*/
 int* numClippedSamples;
 int currentChannel;
 unsigned __int64 lastTimestamp = 0;
 
 char writeBufferTimestamp[8];
+char writeBufferTtl[4];
 
 // Declare read/write streams as globals
 ifstream readStream;
 ofstream writeStreamSamples;
 ofstream writeStreamTimestamps;
+ofstream writeStreamTtl;
 
 using namespace std;
 
+
 int main(int argc, char** argv) {
+
+	cout << endl;
 
 	// Start timer
 	clock_t startTime = clock();
@@ -84,21 +94,24 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	int nChunks = 0;
-
-	cout << endl;
-
+	// Set up samples output file
 	string inputDataFileName = string(argv[1]);
 	string outputFileName = makeOutputSamplesFileName(inputDataFileName);
-	string outputTimestampFileName = makeOutputTimestampsFileName(inputDataFileName);
-
 	writeStreamSamples = ofstream(outputFileName.c_str(), ios::binary);
 	char bufferSamples[BUFFER_SIZE];
 	writeStreamSamples.rdbuf()->pubsetbuf(bufferSamples, BUFFER_SIZE);
 
+	// Set up timestamps output file
+	string outputTimestampFileName = makeOutputTimestampsFileName(inputDataFileName);
 	writeStreamTimestamps = ofstream(outputTimestampFileName.c_str(), ios::binary);
 	char bufferTimestamps[BUFFER_SIZE];
 	writeStreamTimestamps.rdbuf()->pubsetbuf(bufferTimestamps, BUFFER_SIZE);
+
+	// Set up TTL output file
+	string outputTtlFileName = makeOutputTtlFileName(inputDataFileName);
+	writeStreamTtl = ofstream(outputTtlFileName.c_str(), ios::binary);
+	char bufferTtl[BUFFER_SIZE];
+	writeStreamTtl.rdbuf()->pubsetbuf(bufferTimestamps, BUFFER_SIZE);
 
 	// argv[2] should be the channel map file name
 	cout << endl;
@@ -129,26 +142,30 @@ int main(int argc, char** argv) {
 	readStream.rdbuf()->pubsetbuf(bufferInput, BUFFER_SIZE);
 
 	if (readStream.is_open()) {
-		cout << "Successfully opened input data file " << inputDataFileName << endl;
-	}
-	else {
-		cout << "Aborting: failed to open raw data file " << argv[1] << endl;
+		cout << "Successfully opened input data file." << inputDataFileName << endl;
+	} else {
+		cout << "Aborting: failed to open raw data file." << argv[1] << endl;
 		return 0;
 	}
 
 	if (writeStreamSamples.is_open()) {
-		cout << "Successfully opened output samples file " << outputFileName << endl;
-	}
-	else {
-		cout << "Aborting: failed to open output samples file " << outputFileName << endl;
+		cout << "Successfully opened output samples file." << outputFileName << endl;
+	} else {
+		cout << "Aborting: failed to open output samples file." << outputFileName << endl;
 		return 0;
 	}
 
 	if (writeStreamTimestamps.is_open()) {
-		cout << "Successfully opened output timestamps file " << outputTimestampFileName << endl;
+		cout << "Successfully opened output timestamps file." << outputTimestampFileName << endl;
+	} else {
+		cout << "Aborting: failed to open output timestamps file." << outputTimestampFileName << endl;
+		return 0;
 	}
-	else {
-		cout << "Aborting: failed to open output timestamps file " << outputTimestampFileName << endl;
+
+	if (writeStreamTtl.is_open()) {
+		cout << "Successfully opened output TTL file." << outputTtlFileName << endl;
+	} else {
+		cout << "Aborting: failed to open output TTL file." << outputTtlFileName << endl;
 		return 0;
 	}
 
@@ -158,21 +175,17 @@ int main(int argc, char** argv) {
 	readStream.seekg(0, readStream.beg);
 
 	// Create byte buffer with length in terms of uint32
-	//cout << "Current input file pos = " << readStream.tellg()  << "." << endl;
-	cout << "Scanning for data start" << endl;
-
-	cout << "Current input file pos = " << readStream.tellg() << "." << endl;
-	bool foundDataStart = seekNextStx();
-
-	// Now we've reached the start of the data, keep getting records one by one until we reach the end of the file
 	char recordBuffer[RECORD_SIZE];
 
+	// Scan forward to data start
+	cout << "Scanning for data start..." << endl;
+	cout << "Current input file pos = " << readStream.tellg() << "." << endl;
+	bool foundDataStart = seekNextStx();
+	
 	cout << "Allocating write buffer for " << numChannels << " channels x int16." << endl << endl;
 	char* writeBuffer = new char[numChannels*sizeof(__int16)];
-
 	int recordCounter = 0;
 	int badRecordCounter = 0;
-
 	bool validRecord;
 
 	// Create an array of start indices for data samples
@@ -183,50 +196,39 @@ int main(int argc, char** argv) {
 		printf("AD %d\t @ byte %d\n", channelMap.at(i), sampleStartIndex[i]);
 	}
 
-	int percentComplete = 0;
-	int checkInterval = 100;
-
-	cout << endl << endl << "Processing raw data records..." << endl;
-
 	// Create filters
 	vector<FilterButterworth> filters;
 	for (int c = 0; c < numChannels; c++) {
 		filters.push_back(FilterButterworth(HPF_CUTOFF, SAMPLE_RATE, RESONANCE));
 	}
 
-	bool timeEstimatePrinted = false;
-
+	// Prepare to start processing records
+	cout << endl << endl << "Processing raw data records..." << endl;
 	clock_t recordReadStartTime = clock();
+	bool timeEstimatePrinted = false;
+	int percentComplete = 0;
+	int checkInterval = 100;
 
 	while (readStream.read(recordBuffer, RECORD_SIZE)) {
-
-
 		validRecord = processRecord(recordBuffer, writeBuffer, sampleStartIndex, numChannels, filters);
 
 		// Every 100th record, check progress and post to console
 		if (recordCounter % checkInterval == 0)  {
-
 			int currentPercentComplete = (float)readStream.tellg() / (float)fileSize * 100.0;
-
 			if (currentPercentComplete > (percentComplete+1)) {
-
 				if (!timeEstimatePrinted) {
 					clock_t estimatedTotalTime = 50.0 * (clock() - recordReadStartTime) / CLOCKS_PER_SEC;
 					if (estimatedTotalTime < 60) {
 						cout << "Estimated total time = " << (float)estimatedTotalTime << " seconds.";
-					}
-					else {
+					} else {
 						cout << "Estimated total time = " << (float)estimatedTotalTime/60 << " minutes.";
 					}
 					cout << endl << endl;
 
 					// Print progress bar markers
 					cout << endl << "0%";
-					for (int i = 0; i < 50; i++) {
-						cout << "-";
-					}
+					for (int i = 0; i < 50; i++) { cout << "-"; }
 					cout << "100%" << endl << endl;
-
 					cout << "  ";
 					timeEstimatePrinted = true;
 				}
@@ -234,57 +236,40 @@ int main(int argc, char** argv) {
 				// Fill up progress bar
 				percentComplete += 2;
 				cout << "=";
-
 			}
 		}
 
 		if (validRecord) {
 			writeStreamSamples.write(writeBuffer, numChannels*sizeof(__int16));
 			writeStreamTimestamps.write(writeBufferTimestamp, sizeof(unsigned __int64));
+			writeStreamTtl.write(writeBufferTtl, sizeof(unsigned __int32));
 			recordCounter++;
-		}
-		else {
-
+		} else {
+			// Bad record: seek the next STX value.
+			// If we don't find another STX, then we're finished with the file.
 			badRecordCounter++;
-			//debug = true;
-
-			// Seek the next STX value
-			//cout << "Seeking next valid record from index " << readBuffer.getIndex() << endl;
 			bool foundNext = seekNextStx();
-			//cout << "Buffer index after finding record start = " << readBuffer.getIndex() << "." << endl;
-
-			// If the next STX wasn't found, we're done with the file.
-			if (!foundNext) {
-				break;
-			}
-
+			if (!foundNext) {break;}
 		}
 
-
-		if (RECORD_LIMIT != 0 && recordCounter >= RECORD_LIMIT) {
-			break;
-		}
-
+		if (RECORD_LIMIT != 0 && recordCounter >= RECORD_LIMIT) {break;}
 	}
 
 	cout << endl << endl;
-
-	// Create new buffer with size matched to a single record
-	if (readStream.eof())
-	{
+	if (readStream.eof()) {
+		// Finished successful read
 		cout << "Finished! " << recordCounter << " samples read, " << badRecordCounter << " bad records.";
 		cout << endl << endl;
-	}
-	else if (readStream.bad())
-	{
+	} else if (readStream.bad()) {
 		// Error reading
-		cout << "Error while reading data" << endl << endl;
+		cout << "Error while reading data." << endl << endl;
 	}
 
-	// CLOSE FILES
+	// Close files
 	readStream.close();
 	writeStreamSamples.close();
 	writeStreamTimestamps.close();
+	writeStreamTtl.close();
 
 	// Print some summary text
 	float meanPercentClipped = 0;
@@ -294,7 +279,7 @@ int main(int argc, char** argv) {
 		meanPercentClipped += percentClipped/numChannels;
 		printf("AD ch %d: \t %d\t (%.3f%%)\n", channelMap[ch], numClippedSamples[ch], percentClipped);
 	}
-
+	
 	cout << endl;
 	printf("Mean clipping across all AD channels was %.3f%%.\n", meanPercentClipped);
 	cout << endl << endl;
@@ -302,7 +287,6 @@ int main(int argc, char** argv) {
 	// Get time elapsed
 	clock_t endTime = clock();
 	clock_t timeElapsed = endTime - startTime;
-
 	cout << "That took " << (float)timeElapsed/CLOCKS_PER_SEC << " seconds." << endl << endl;
 
 	// COLLECT GARBAGE
@@ -310,35 +294,27 @@ int main(int argc, char** argv) {
 	delete[] numClippedSamples;
 	delete[] sampleStartIndex;
 
-
-
 	return 0;
-
 }
+
 
 __int32 getInt32(char* buff, int idx) {
-
-	// Reinterpret all buffer bytes as unsigned chars
+	// Reinterpret all buffer bytes as signed chars
 	unsigned char* bytes = reinterpret_cast<unsigned char*>(buff);
-
 	return (bytes[idx + 3] << 24) + (bytes[idx + 2] << 16) + (bytes[idx + 1] << 8) + (bytes[idx]);
-
 }
+
 
 unsigned __int32 getUnsignedInt32(char* buff, int idx) {
-
 	// Reinterpret all buffer bytes as unsigned chars
 	unsigned char* bytes = reinterpret_cast<unsigned char*>(buff);
-
 	return (bytes[idx + 3] << 24) | (bytes[idx + 2] << 16) | (bytes[idx + 1] << 8) | (bytes[idx]);
-
 }
 
-void printBits(unsigned char byte) {
 
+void printBits(unsigned char byte) {
 	char bit;
 	cout << "Char value " << (int)byte << ", bits:";
-
 	for (int i = 0; i < 8; i++) {
 		bit = (byte >> (7-i)) & 1;
 		cout << (int) bit;
@@ -346,17 +322,17 @@ void printBits(unsigned char byte) {
 	cout << endl;
 }
 
-void printBits(unsigned __int64 val) {
 
+void printBits(unsigned __int64 val) {
 	char bit;
 	cout << "Char value " << val << ", bits:";
-
 	for (int i = 0; i < 64; i++) {
 		bit = (val >> (63-i)) & 1;
 		cout << (int)bit;
 	}
 	cout << endl;
 }
+
 
 bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters) {
 	// Get sample and timestamp data from a single raw data record
@@ -394,15 +370,9 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 	// be combined into an int64
 	unsigned __int32 timestampHigh =  getUnsignedInt32(sampleBuff, 3 * sizeof(__int32));
 	unsigned __int32 timestampLow = getUnsignedInt32(sampleBuff, 4 * sizeof(__int32));
-
 	unsigned __int64 timestamp = timestampHigh;
 	timestamp <<= 32;
 	timestamp += timestampLow;
-
-	int idx;
-	for (int i = 0; i < sizeof(unsigned __int64); i++) {
-		idx = 3 * sizeof(__int32) + i;
-	}
 
 
 	// Check the timestamp is greater than the previous value.
@@ -410,22 +380,24 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 	if (timestamp <= lastTimestamp) {
 		cout << "Invalid timestamp of " << timestamp << "." << endl;
 		return false;
-	}
-	else {
+	} else {
 		// Fill the timestamp write buffer
 		for (int i = 0; i < 8; i++) {
 			writeBufferTimestamp[i] = ((timestamp >> (i * 8)));
 		}
-		
+	}
+
+	// Get the parallel TTL input port value
+	unsigned __int32 ttlInput = getUnsignedInt32(sampleBuff, 6 * sizeof(__int32));
+	for (int i = 0; i < 4; i++) {
+		writeBufferTtl[i] = ((ttlInput >> (i * 8)));
 	}
 
 	int numBytes = sizeof(__int32);
 	int c = 0;
-
 	__int32 val;
 
 	for (int ch = 0; ch < numChannelsToRead; ch++) {
-
 		// Set global current channel var
 		currentChannel = ch;
 
@@ -434,15 +406,11 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 
 		// Filter sample and enter info write buffer
 		filterSample(val, filters.at(ch), writeBuff, c);
-
-		c++;
-		c++;
-
+		c+=2;
 	}
-
 	return true;
-
 }
+
 
 void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex) {
 	
@@ -454,137 +422,113 @@ void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIn
 	if (newVal > 32767) {
 		newVal = 32767;
 		numClippedSamples[currentChannel] += 1;
-	}
-	else if (newVal < -32768) {
+	} else if (newVal < -32768) {
 		newVal = -32768;
 		numClippedSamples[currentChannel] += 1;
 	}
-	
-	__int16 newValInt = newVal;
 
+	__int16 newValInt = newVal;
 	buff[buffIndex] = newValInt;
 	buff[buffIndex+1] = newValInt >> 8;
-	
 }
 
-__int32 CRC(char* buff) {
 
+__int32 CRC(char* buff) {
 	int recordHeaderFooterSize = 18;  // in int32
 	int recordFieldCount = recordHeaderFooterSize + NUM_CHANNELS_TOTAL;
 	int fieldIndex = 0;
-
 	__int32 crcValue = 0;
-
 	__int32 currentField;
-
-	//loop through each field in the record
+	//loop through each field in the record and apply bitwise XOR
 	for (fieldIndex = 0; fieldIndex<recordFieldCount; fieldIndex++) {
-
 		currentField = getInt32(buff, fieldIndex * sizeof(__int32));
-		//logically or all values in packet
 		crcValue ^= currentField;
 	}
-
 	return crcValue;
-
 }
 
-string makeOutputSamplesFileName(string& inputFileName)
-{
+
+string makeOutputSamplesFileName(string& inputFileName) {
 	string outputName = makeOutputBaseFileName(inputFileName);
 	outputName.append("_samples.dat");
 	cout << "Output samples file name = " << (outputName) << endl;
 	return outputName;
 }
 
-string makeOutputTimestampsFileName(string& inputFileName)
-{
+
+string makeOutputTimestampsFileName(string& inputFileName) {
 	string outputName = makeOutputBaseFileName(inputFileName);
 	outputName.append("_timestamps.dat");
 	cout << "Output timestamps file name = " << (outputName) << endl;
 	return outputName;
 }
 
+
+string makeOutputTtlFileName(string& inputFileName) {
+	string outputName = makeOutputBaseFileName(inputFileName);
+	outputName.append("_ttl.dat");
+	cout << "Output TTL file name = " << (outputName) << endl;
+	return outputName;
+}
+
+
 string makeOutputBaseFileName(string& str) {
-
-	//string str(inputFileName);
-
 	int idx0 = str.rfind("\\");
 	int idx1 = str.rfind(".");
-
 	string path = str.substr(0, idx0 + 1);
 	string name = str.substr(idx0 + 1, idx1 - idx0 - 1);
 	string ext = str.substr(idx1);
-
 	return name;
-
 }
+
 
 vector<int> readChannelMap(char* fileName) {
 
 	vector<int> channels;
-
 	string line;
-
 	ifstream myfile(fileName);
-
 	int lineCount = 0;
 
 	cout << "Parsing channel map file " << fileName << endl;
 
-	//int currentChannel;
-
-	if (myfile.is_open())
-	{
-		while (!myfile.eof())
-		{
+	if (myfile.is_open()) {
+		while (!myfile.eof()) {
 			getline(myfile, line);
-
+			
 			// Skip any blank or comment lines
-			if (line.length() == 0 || line.at(0) == '%') {
-				continue;
-			}
+			if (line.length() == 0 || line.at(0) == '%') {continue;}
 
 			if (isNumber(line)) {
 				channels.push_back(atoi(line.c_str()));
 				cout << channels.back() << " ";
 				lineCount++;
-			}
-			else {
+			} else {
 				cout << "Invalid line \"" << line << " in channel map file." << endl;
 				channels.clear();
 				break;
 			}
 
-
 		}
 		cout << endl;
 		cout << "Read " << lineCount << " lines (channels)." << endl;
 		myfile.close();
-	}
-
-	else { cout << "Unable to open file"; }
+	} else { cout << "Unable to open channel map file"; }
 
 	return channels;
-
 }
 
-bool isNumber(const string& s)
-{
+
+bool isNumber(const string& s) {
 	string::const_iterator it = s.begin();
 	while (it != s.end() && isdigit(*it)) ++it;
 	return !s.empty() && it == s.end();
-
 }
 
+
 bool seekNextStx() {
-
 	char buffer[sizeof(__int32)];
-
 	int buffIdx = 0;
-
 	while (readStream.read(buffer, sizeof(__int32))) {
-
 		buffIdx++;
 		if (getInt32(buffer, 0) == RECORD_STX) {
 			cout << "Record start found at byte " << readStream.tellg() << "." << endl;
@@ -592,14 +536,6 @@ bool seekNextStx() {
 			readStream.seekg(-4, readStream.cur);
 			return true;
 		}
-		// Shouldn't need to seek backwards since all data in file are stored as __int32.
-		// We just carry on reading out __int32 until we reach a valid STX value
-		//else {
-		//	// Move back three, such that next read commences 1 byte after
-		//	readStream.seekg(-3, readStream.cur);
-		//}
 	}
-
 	return false;
-
 }
