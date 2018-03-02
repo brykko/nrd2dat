@@ -51,32 +51,21 @@ void printBits(unsigned char byte);
 void printBits(unsigned __int64 val);
 
 // Find the next 'STX' value in the file
-bool seekNextStx();
+bool seekNextStx(ifstream& readStream);
 
 // Process one record
-bool processRecord(char* sampleBuff, char* writeBuff, int* bufferStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters);
+bool processRecord(char* sampleReadBuff, char* sampleWriteBuff, char* timestampBuff, char* ttlBuff, int* bufferStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples);
 
 // Cyclic redundancy error check
 __int32 CRC(char* buff);
 
 // Filter one data sample
-void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex);
+void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex, int currentChannel, int* nClippedSamples);
 
 /*
 GLOBALS
 */
-int* numClippedSamples;
-int currentChannel;
 unsigned __int64 lastTimestamp = 0;
-
-char writeBufferTimestamp[8];
-char writeBufferTtl[4];
-
-// Declare read/write streams as globals
-ifstream readStream;
-ofstream writeStreamSamples;
-ofstream writeStreamTimestamps;
-ofstream writeStreamTtl;
 
 using namespace std;
 
@@ -97,19 +86,19 @@ int main(int argc, char** argv) {
 	// Set up samples output file
 	string inputDataFileName = string(argv[1]);
 	string outputFileName = makeOutputSamplesFileName(inputDataFileName);
-	writeStreamSamples = ofstream(outputFileName.c_str(), ios::binary);
+	ofstream writeStreamSamples = ofstream(outputFileName.c_str(), ios::binary);
 	char bufferSamples[BUFFER_SIZE];
 	writeStreamSamples.rdbuf()->pubsetbuf(bufferSamples, BUFFER_SIZE);
 
 	// Set up timestamps output file
 	string outputTimestampFileName = makeOutputTimestampsFileName(inputDataFileName);
-	writeStreamTimestamps = ofstream(outputTimestampFileName.c_str(), ios::binary);
+	ofstream writeStreamTimestamps = ofstream(outputTimestampFileName.c_str(), ios::binary);
 	char bufferTimestamps[BUFFER_SIZE];
 	writeStreamTimestamps.rdbuf()->pubsetbuf(bufferTimestamps, BUFFER_SIZE);
 
 	// Set up TTL output file
 	string outputTtlFileName = makeOutputTtlFileName(inputDataFileName);
-	writeStreamTtl = ofstream(outputTtlFileName.c_str(), ios::binary);
+	ofstream writeStreamTtl = ofstream(outputTtlFileName.c_str(), ios::binary);
 	char bufferTtl[BUFFER_SIZE];
 	writeStreamTtl.rdbuf()->pubsetbuf(bufferTimestamps, BUFFER_SIZE);
 
@@ -128,14 +117,14 @@ int main(int argc, char** argv) {
 	int numChannels = channelMap.size();
 
 	// Initialize clipped channels array
-	numClippedSamples = new int[numChannels];
+	int* nClippedSamples = new int[numChannels];
 	for (int ch = 0; ch < numChannels; ch++) {
-		numClippedSamples[ch] = 0;
+		nClippedSamples[ch] = 0;
 	}
 
 	// argv[1] should be the raw data file name
 	cout << "Opening " << argv[1] << endl;
-	readStream = ifstream(argv[1], ios::binary);
+	ifstream readStream = ifstream(argv[1], ios::binary);
 
 	// Set the buffer
 	char bufferInput[BUFFER_SIZE];
@@ -174,13 +163,15 @@ int main(int argc, char** argv) {
 	streamoff fileSize = readStream.tellg();
 	readStream.seekg(0, readStream.beg);
 
-	// Create byte buffer with length in terms of uint32
+	// Create known-length buffers
 	char recordBuffer[RECORD_SIZE];
+	char writeBufferTimestamp[8];
+	char writeBufferTtl[4];
 
 	// Scan forward to data start
 	cout << "Scanning for data start..." << endl;
 	cout << "Current input file pos = " << readStream.tellg() << "." << endl;
-	bool foundDataStart = seekNextStx();
+	bool foundDataStart = seekNextStx(readStream);
 	
 	cout << "Allocating write buffer for " << numChannels << " channels x int16." << endl << endl;
 	char* writeBuffer = new char[numChannels*sizeof(__int16)];
@@ -210,7 +201,7 @@ int main(int argc, char** argv) {
 	int checkInterval = 100;
 
 	while (readStream.read(recordBuffer, RECORD_SIZE)) {
-		validRecord = processRecord(recordBuffer, writeBuffer, sampleStartIndex, numChannels, filters);
+		validRecord = processRecord(recordBuffer, writeBuffer, writeBufferTimestamp, writeBufferTtl, sampleStartIndex, numChannels, filters, nClippedSamples);
 
 		// Every 100th record, check progress and post to console
 		if (recordCounter % checkInterval == 0)  {
@@ -247,8 +238,9 @@ int main(int argc, char** argv) {
 		} else {
 			// Bad record: seek the next STX value.
 			// If we don't find another STX, then we're finished with the file.
+			cout << "Record ID" << recordCounter << " was not successfully read.";
 			badRecordCounter++;
-			bool foundNext = seekNextStx();
+			bool foundNext = seekNextStx(readStream);
 			if (!foundNext) {break;}
 		}
 
@@ -275,9 +267,9 @@ int main(int argc, char** argv) {
 	float meanPercentClipped = 0;
 	cout << "Clipped samples:" << endl;
 	for (int ch = 0; ch < numChannels; ch++) {
-		float percentClipped = (float)numClippedSamples[ch] / (float)recordCounter * 100.0;
+		float percentClipped = (float)nClippedSamples[ch] / (float)recordCounter * 100.0;
 		meanPercentClipped += percentClipped/numChannels;
-		printf("AD ch %d: \t %d\t (%.3f%%)\n", channelMap[ch], numClippedSamples[ch], percentClipped);
+		printf("AD ch %d: \t %d\t (%.3f%%)\n", channelMap[ch], nClippedSamples[ch], percentClipped);
 	}
 	
 	cout << endl;
@@ -291,7 +283,7 @@ int main(int argc, char** argv) {
 
 	// COLLECT GARBAGE
 	delete[] writeBuffer;
-	delete[] numClippedSamples;
+	delete[] nClippedSamples;
 	delete[] sampleStartIndex;
 
 	return 0;
@@ -334,11 +326,11 @@ void printBits(unsigned __int64 val) {
 }
 
 
-bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters) {
+bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, char* ttlBuff, int* writeBuffStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples) {
 	// Get sample and timestamp data from a single raw data record
 
 	// Get the packet ID. Reject record if value is not 1
-	__int32 packetId = getInt32(sampleBuff, 1 * sizeof(__int32));
+	__int32 packetId = getInt32(sampleReadBuff, 1 * sizeof(__int32));
 
 	if (packetId != 1) {
 		cout << "Invalid packet id" << endl;
@@ -346,18 +338,18 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 	}
 
 	// Get the packet size; 
-	__int32 packetSize = getInt32(sampleBuff, 2 * sizeof(__int32));
+	__int32 packetSize = getInt32(sampleReadBuff, 2 * sizeof(__int32));
 
 	if (packetSize != NUM_CHANNELS_TOTAL+10) {
 		cout << "Invalid packet size of " << packetSize << endl;
 		for (int i = 0; i < 4; i++) {
-			printBits((unsigned char)sampleBuff[2 * sizeof(__int32) + i]);
+			printBits((unsigned char)sampleReadBuff[2 * sizeof(__int32) + i]);
 		}
 		return false;
 	}
 
 	// Run CRC
-	__int32 crcValue = CRC(sampleBuff);
+	__int32 crcValue = CRC(sampleReadBuff);
 
 	if (crcValue != 0) {
 		cout << endl << "CRC failed with value of " << crcValue << endl << ".";
@@ -368,8 +360,8 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 
 	// Read the timestamp first; it comes in 2 int32 pieces which must
 	// be combined into an int64
-	unsigned __int32 timestampHigh =  getUnsignedInt32(sampleBuff, 3 * sizeof(__int32));
-	unsigned __int32 timestampLow = getUnsignedInt32(sampleBuff, 4 * sizeof(__int32));
+	unsigned __int32 timestampHigh =  getUnsignedInt32(sampleReadBuff, 3 * sizeof(__int32));
+	unsigned __int32 timestampLow = getUnsignedInt32(sampleReadBuff, 4 * sizeof(__int32));
 	unsigned __int64 timestamp = timestampHigh;
 	timestamp <<= 32;
 	timestamp += timestampLow;
@@ -383,14 +375,14 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 	} else {
 		// Fill the timestamp write buffer
 		for (int i = 0; i < 8; i++) {
-			writeBufferTimestamp[i] = ((timestamp >> (i * 8)));
+			timestampBuff[i] = ((timestamp >> (i * 8)));
 		}
 	}
 
 	// Get the parallel TTL input port value
-	unsigned __int32 ttlInput = getUnsignedInt32(sampleBuff, 6 * sizeof(__int32));
+	unsigned __int32 ttlInput = getUnsignedInt32(sampleReadBuff, 6 * sizeof(__int32));
 	for (int i = 0; i < 4; i++) {
-		writeBufferTtl[i] = ((ttlInput >> (i * 8)));
+		ttlBuff[i] = ((ttlInput >> (i * 8)));
 	}
 
 	int numBytes = sizeof(__int32);
@@ -398,33 +390,27 @@ bool processRecord(char* sampleBuff, char* writeBuff, int* writeBuffStartIndices
 	__int32 val;
 
 	for (int ch = 0; ch < numChannelsToRead; ch++) {
-		// Set global current channel var
-		currentChannel = ch;
-
 		// Get the uint32 value of the current sample
-		val = getInt32(sampleBuff, writeBuffStartIndices[ch]);
-
+		val = getInt32(sampleReadBuff, writeBuffStartIndices[ch]);
 		// Filter sample and enter info write buffer
-		filterSample(val, filters.at(ch), writeBuff, c);
+		filterSample(val, filters.at(ch), writeBuff, c, ch, nClippedSamples);
 		c+=2;
 	}
 	return true;
 }
 
 
-void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex) {
-	
+void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex, int currentChannel, int* nClippedSamples) {
 	filter.Update((float)val);
-	
 	float newVal = filter.Value() * SAMPLE_SCALE_FACTOR;
 
 	// Clip value if outside of int16 range.
 	if (newVal > 32767) {
 		newVal = 32767;
-		numClippedSamples[currentChannel] += 1;
+		nClippedSamples[currentChannel] += 1;
 	} else if (newVal < -32768) {
 		newVal = -32768;
-		numClippedSamples[currentChannel] += 1;
+		nClippedSamples[currentChannel] += 1;
 	}
 
 	__int16 newValInt = newVal;
@@ -525,7 +511,7 @@ bool isNumber(const string& s) {
 }
 
 
-bool seekNextStx() {
+bool seekNextStx(ifstream& readStream) {
 	char buffer[sizeof(__int32)];
 	int buffIdx = 0;
 	while (readStream.read(buffer, sizeof(__int32))) {
