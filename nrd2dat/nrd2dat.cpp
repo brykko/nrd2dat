@@ -12,6 +12,8 @@
 #include "buffers.h"
 #include "filters.h"
 
+using namespace std;
+
 // DSP consts
 #define SAMPLE_SCALE_FACTOR 0.5f   // samples are multipled by this before conversion to int16, to prevent clipping
 #define RESONANCE 1.414213562373f  // pi = lowest possible resonance
@@ -54,20 +56,13 @@ void printBits(unsigned __int64 val);
 bool seekNextStx(ifstream& readStream);
 
 // Process one record
-bool processRecord(char* sampleReadBuff, char* sampleWriteBuff, char* timestampBuff, char* ttlBuff, int* bufferStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples);
+bool processRecord(char* sampleReadBuff, char* sampleWriteBuff, char* timestampBuff, char* ttlBuff, int* bufferStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples, unsigned __int64& lastTimestamp);
 
 // Cyclic redundancy error check
 __int32 CRC(char* buff);
 
 // Filter one data sample
 void filterSample(__int32 val, FilterButterworth& filter, char* buff, int buffIndex, int currentChannel, int* nClippedSamples);
-
-/*
-GLOBALS
-*/
-unsigned __int64 lastTimestamp = 0;
-
-using namespace std;
 
 
 int main(int argc, char** argv) {
@@ -173,11 +168,14 @@ int main(int argc, char** argv) {
 	cout << "Current input file pos = " << readStream.tellg() << "." << endl;
 	bool foundDataStart = seekNextStx(readStream);
 	
+	// Allocate output samples buffer
 	cout << "Allocating write buffer for " << numChannels << " channels x int16." << endl << endl;
 	char* writeBuffer = new char[numChannels*sizeof(__int16)];
+
 	int recordCounter = 0;
 	int badRecordCounter = 0;
 	bool validRecord;
+	unsigned __int64 lastTimestamp = 0;
 
 	// Create an array of start indices for data samples
 	cout << "Expected AD sample locations in raw data record:" << endl;
@@ -201,7 +199,7 @@ int main(int argc, char** argv) {
 	int checkInterval = 100;
 
 	while (readStream.read(recordBuffer, RECORD_SIZE)) {
-		validRecord = processRecord(recordBuffer, writeBuffer, writeBufferTimestamp, writeBufferTtl, sampleStartIndex, numChannels, filters, nClippedSamples);
+		validRecord = processRecord(recordBuffer, writeBuffer, writeBufferTimestamp, writeBufferTtl, sampleStartIndex, numChannels, filters, nClippedSamples, lastTimestamp);
 
 		// Every 100th record, check progress and post to console
 		if (recordCounter % checkInterval == 0)  {
@@ -326,7 +324,7 @@ void printBits(unsigned __int64 val) {
 }
 
 
-bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, char* ttlBuff, int* writeBuffStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples) {
+bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, char* ttlBuff, int* writeBuffStartIndices, int& numChannelsToRead, vector<FilterButterworth>& filters, int* nClippedSamples, unsigned __int64& lastTimestamp) {
 	// Get sample and timestamp data from a single raw data record
 
 	// Get the packet ID. Reject record if value is not 1
@@ -377,6 +375,7 @@ bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, c
 		for (int i = 0; i < 8; i++) {
 			timestampBuff[i] = ((timestamp >> (i * 8)));
 		}
+		lastTimestamp = timestamp;
 	}
 
 	// Get the parallel TTL input port value
