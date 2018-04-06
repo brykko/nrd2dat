@@ -3,22 +3,20 @@
 
 #include <cmath>
 
+#define PI 3.141592653589793
+
 class FilterButterworth
 {
-	/// <summary>
-	/// rez amount, from sqrt(2) to ~ 0.1
-	/// </summary>
+
 public:
 
 	float resonance;
 	float frequency;
 	int sampleRate;
-	float c, a1, a2, a3, b1, b2;
+	double c, a1, a2, a3, b1, b2;
 
-	float inputHistory[2];
-	float outputHistory[3];
-
-	const double PI = 3.141592653589793;
+	double inputHistory[2];
+	double outputHistory[3];
 
 public:
 
@@ -37,7 +35,7 @@ public:
 		frequency = freq;
 		sampleRate = sampRate;
 
-		c = (float)_CMATH_::tan(PI * frequency / (float)sampleRate);
+		c = _CMATH_::tan(PI * frequency / (double)sampleRate);
 		a1 = 1.0f / (1.0f + resonance * c + c * c);
 		a2 = -2.0f * a1;
 		a3 = a1;
@@ -55,9 +53,9 @@ public:
 	}
 
 
-	void Update(float newInput)
+	void Update(double newInput)
 	{
-		float newOutput = a1 * newInput + a2 * inputHistory[0] + a3 * inputHistory[1] - b1 * outputHistory[0] - b2 * outputHistory[1];
+		double newOutput = a1 * newInput + a2 * inputHistory[0] + a3 * inputHistory[1] - b1 * outputHistory[0] - b2 * outputHistory[1];
 
 		///cout << "New value = " << newOutput << endl;
 
@@ -72,11 +70,50 @@ public:
 
 	}
 
-	float Value()
+	double Value()
 	{
 		return outputHistory[0];
 	}
 
+};
+
+
+class ExpMovingAverage{
+
+protected:
+	float mValue;
+	float mFrequency;
+	double a, b;
+
+public:
+
+	ExpMovingAverage(float f) {
+		init(f, 0);
+	}
+
+	ExpMovingAverage(float f, float initVal) {
+		init(f, initVal);
+	}
+
+	void init(float f, float initVal) {
+		mValue = initVal;
+		mFrequency = f;
+		double alpha = 1.0 - exp(-PI*f);
+		b = alpha;      // coefficient of current sample
+		a = 1.0 - alpha;  // coefficient of adjacent samples
+	}
+
+	void update(float y) {
+		mValue = b*(double)y + a*(double)mValue;
+	}
+	
+	float value() {
+		return mValue;
+	}
+
+	float timeConstant() {
+		return 1 / (2 * PI*mFrequency);
+	}
 };
 
 #endif
