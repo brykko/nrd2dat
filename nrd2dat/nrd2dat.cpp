@@ -60,7 +60,7 @@ template <typename T> T getNumericArg(const char* arg, const string& prmName, T 
 __int32 getInt32(char* buff, int idx);
 
 // File name construction funcs
-string makeOutputDatFilePath(const string& inputFilePath, const string& fileType);
+string makeOutputFilePath(const string& basePath, const string& fileType, const string& ext);
 string makeOutputBaseFilePath(const string& inputFilePath);
 
 // Channel map reader
@@ -90,12 +90,13 @@ void filterSample(float val, FILTER_TYPE* filter, char* buff, int buffIndex, int
 
 // Logging
 template <typename... Args> void lg(const char& level, const char* fmt, const Args &... args);
-bool initLogging();
+bool initLogging(const string& inFileName);
 std::shared_ptr<spd::logger> loggerConsole;
 std::shared_ptr<spd::logger> loggerFile;
 
 string clockTimeToStr(clock_t t);
 string basePath = "";
+bool loggingInitialized = false;
 
 void printHelp();
 
@@ -125,7 +126,7 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	bool loggingInitialized = initLogging();
+	bool loggingInitialized = initLogging(inFileName);
 	if (!loggingInitialized) { return 0; }
 
 	// Parse optional arguments
@@ -485,11 +486,11 @@ __int32 CRC(char* buff, size_t& nChannelsTotal) {
 }
 
 
-string makeOutputDatFilePath(const string& basePath, const string& fileType) {
+string makeOutputFilePath(const string& basePath, const string& fileType, const string& ext) {
 	string outputPath = basePath;
 	outputPath.append("_");
 	outputPath.append(fileType);
-	outputPath.append(".dat");
+	outputPath.append(ext);
 	lg('d', "Output {} file path = \"{}\".", fileType, outputPath);
 	return outputPath;
 }
@@ -594,6 +595,9 @@ bool seekNextStx(ifstream& readStream) {
 
 template <typename... Args> void lg(const char& level, const char* fmt, const Args &... args) {
 
+	// Don't log if uninitialized
+	if (!loggingInitialized){ return; }
+
 	spd::level::level_enum level_;
 	switch (level) {
 	case 'v':
@@ -635,8 +639,9 @@ void printHelp() {
 }
 
 
-bool initLogging() {
-	string logFilePath = basePath.append("nrd2dat.log");
+bool initLogging(const string& inFileName) {
+	string basePath = makeOutputBaseFilePath(inFileName);
+	const string logFilePath = makeOutputFilePath(basePath, "nrd2dat", ".log");
 	try {
 		loggerFile = spd::basic_logger_st("logfile", logFilePath, true);
 	}
@@ -648,6 +653,7 @@ bool initLogging() {
 	loggerConsole = spd::stdout_logger_st("console");
 	loggerConsole->set_level(spd::level::info);
 	spd::set_pattern("[%H:%M:%S] [%L] %v");
+	loggingInitialized = true;
 	lg('d', "Base path = {}.", basePath);
 	lg('i', "nrd2dat v{}, date {}.", VERSION, VERSION_DATE);
 	lg('i', "Saving log file in {}.", logFilePath);
@@ -694,7 +700,7 @@ bool openFiles(string& iName, ifstream& iStream, streamoff& iSize, char* iBuff, 
 		string fileType = outputFileTypes[i];
 		string filename;
 		try {
-			filename = makeOutputDatFilePath(baseFilePath, fileType);
+			filename = makeOutputFilePath(baseFilePath, fileType, ".dat");
 			outputFilePaths[i] = filename;
 		} catch (exception& e) {
 			lg('e', "Failed to build output {} filename: \"{}\". Aborting.", fileType, e.what());
@@ -763,7 +769,6 @@ template <typename T> T string_to_type(const std::string &str)
 	ss >> num;
 	return num;
 }
-
 
 bool parseArgs(int argc, char** argv, bool& debugMode, bool& helpFlag, float& hpfLowCutFreq, float& inputRangeUv, size_t& bufferSize) {
 	int i = 3;
