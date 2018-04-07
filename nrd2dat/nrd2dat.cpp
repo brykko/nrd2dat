@@ -5,6 +5,7 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <sstream>
 #include <cctype>
 #include <cmath>
 #include <iostream>
@@ -25,7 +26,8 @@ namespace spd = spdlog;
 #define FILTER_ORDER 4
 
 // File format consts
-#define BUFFER_SIZE 65536		   // set size of buffer used by IO streams
+#define NBYTES_HEADER 16384        // standard 16 kb Neuralynx file header
+#define BUFFER_SIZE 65536		   // default size of buffer used by IO streams
 #define RECORD_LIMIT 0			   // limit processing to a fixed number of records
 #define RECORD_STX 2048			   // value of STX field at position 0 in each record
 #define RECORD_SIZE 584			   // record size in bytes
@@ -45,6 +47,10 @@ namespace spd = spdlog;
 #define FILTER_TYPE ExpMovingAverage
 
 bool openFiles(string& iName, ifstream& iStream, streamoff& iSize, char*iBuff, ofstream oStreams[], char** oBuffs, size_t bufferSize);
+
+template <typename T> bool getRawHeaderInfo(ifstream& stream, string fieldName, T& val, const T defaultVal);
+
+template <typename T> T string_to_type(const std::string &str);
 
 // Argument parsing
 bool parseArgs(int argc, char** argv, bool& debugMode, bool& helpFlag, float& hpfLowCutFreq, float& inputRangeUv, size_t& bufferSize);
@@ -71,10 +77,10 @@ void printBits(unsigned __int64 val);
 bool seekNextStx(ifstream& readStream);
 
 // Process one record. This is the workhorse function for reading data from the .nrd file.
-bool processRecord(char* sampleReadBuff, char* sampleWriteBuff, char* timestampBuff, char* ttlBuff, int* bufferStartIndices, const int& numChannelsToRead, vector<FILTER_TYPE*> filters, int* nClippedSamples, unsigned __int64& lastTimestamp, float& inputRange);
+bool processRecord(char* sampleReadBuff, char* sampleWriteBuff, char* timestampBuff, char* ttlBuff, int* bufferStartIndices, const int& numChannelsToRead, vector<FILTER_TYPE*> filters, int* nClippedSamples, unsigned __int64& lastTimestamp, float& inputRange, size_t& nChannelsTotal);
 
 // Cyclic redundancy error check
-__int32 CRC(char* buff);
+__int32 CRC(char* buff, size_t& nChannelsTotal);
 
 float mod_(float x, float div);
 
@@ -142,10 +148,22 @@ int main(int argc, char** argv) {
 	streamoff inFileSize;
 	char** outFileBuffers = new char*[3]();
 	char* inFileBuffer = nullptr;
+	char* rawFileHeader = nullptr;
+	size_t recordSize, nChannelsTotal;
+
 	if (!openFiles(inFileName, *inFileStream, inFileSize, inFileBuffer, outFileStreams, outFileBuffers, bufferSize)) { 
 		cleanup(outFileStreams, inFileStream, nullptr, inFileBuffer, nullptr, nullptr, outFileBuffers);
 		return 0;
 	};
+
+	string fileVersion;
+	double adBitVolts;
+	float sampleFrequency;
+	getRawHeaderInfo<size_t>(*inFileStream, "-RecordSize", recordSize, RECORD_SIZE);
+	getRawHeaderInfo<size_t>(*inFileStream, "-NumADChannels", nChannelsTotal, NUM_CHANNELS_TOTAL);
+	getRawHeaderInfo<string>(*inFileStream, "-FileVersion", fileVersion, "(unknown)");
+	getRawHeaderInfo<double>(*inFileStream, "-ADBitVolts", adBitVolts, RAW_AD_BIT_VOLTS);
+	getRawHeaderInfo<float>(*inFileStream, "-SamplingFrequency", sampleFrequency, SAMPLE_RATE);
 
 	// argv[2] should be the channel map file name
 	vector<int> channelMap = readChannelMap(argv[2]);
@@ -168,7 +186,7 @@ int main(int argc, char** argv) {
 	lg('d', "Data start found at position {}", inFileStream->tellg());
 
 	// Allocate buffers
-	char recordBuffer[RECORD_SIZE]; // read buffer for one nrd record
+	char* recordBuffer = new char[recordSize]; // read buffer for one nrd record
 	lg('d', "Allocating write buffer for {} channels x int16.", nChannels);
 	char* writeBuffer = new char[nChannels*sizeof(__int16)];
 	char writeBufferTimestamp[8];
@@ -189,13 +207,13 @@ int main(int argc, char** argv) {
 
 	vector<FILTER_TYPE*> filters;
 	for (int c = 0; c < nChannels; c++) {
-		FILTER_TYPE* filt = new FILTER_TYPE(HPF_CUTOFF / (SAMPLE_RATE / 2.0));
+		FILTER_TYPE* filt = new FILTER_TYPE(hpfLowCutFreq / (sampleFrequency / 2.0));
 		filters.push_back(filt);
 	}
 
 	double adBitVoltsOut = inputRangeUv / 32767.f / 1e6;
-	float scaleFactor = (float)RAW_AD_BIT_VOLTS / adBitVoltsOut;
-	lg('i', "Input range = {:.0f} uV, scale factor = {:.3f}, bit-volts IN={:.6g}, OUT={:.6g}.", inputRangeUv, scaleFactor, RAW_AD_BIT_VOLTS, adBitVoltsOut);
+	float scaleFactor = (float)adBitVolts / adBitVoltsOut;
+	lg('i', "Input range = {:.0f} uV, scale factor = {:.3f}, bit-volts IN={:.6g}, OUT={:.6g}.", inputRangeUv, scaleFactor, adBitVolts, adBitVoltsOut);
 	lg('i', "HPF low-cut frequency = {:.2f} Hz.", hpfLowCutFreq);
 
 	// Prepare to start processing records
@@ -206,8 +224,8 @@ int main(int argc, char** argv) {
 	int checkInterval = 100;
 	bool showProgress = true;
 
-	while (inFileStream->read(recordBuffer, RECORD_SIZE)) {
-		validRecord = processRecord(recordBuffer, writeBuffer, writeBufferTimestamp, writeBufferTtl, sampleStartIndex, nChannels, filters, nClippedSamples, lastTimestamp, scaleFactor);
+	while (inFileStream->read(recordBuffer, recordSize)) {
+		validRecord = processRecord(recordBuffer, writeBuffer, writeBufferTimestamp, writeBufferTtl, sampleStartIndex, nChannels, filters, nClippedSamples, lastTimestamp, scaleFactor, nChannelsTotal);
 
 		// Every 100th record, check progress and post to console
 		if (showProgress && recordCounter % checkInterval == 0)  {
@@ -358,7 +376,7 @@ void printBits(unsigned __int64 val) {
 }
 
 
-bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, char* ttlBuff, int* writeBuffStartIndices, const int& numChannelsToRead, vector<FILTER_TYPE*> filters, int* nClippedSamples, unsigned __int64& lastTimestamp, float& scaleFactor) {
+bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, char* ttlBuff, int* writeBuffStartIndices, const int& numChannelsToRead, vector<FILTER_TYPE*> filters, int* nClippedSamples, unsigned __int64& lastTimestamp, float& scaleFactor, size_t& nChannelsTotal) {
 	// Get sample and timestamp data from a single raw data record
 
 	// Get the packet ID. Reject record if value is not 1
@@ -372,7 +390,7 @@ bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, c
 	// Get the packet size; 
 	__int32 packetSize = getInt32(sampleReadBuff, 2 * sizeof(__int32));
 
-	if (packetSize != NUM_CHANNELS_TOTAL + 10) {
+	if (packetSize != nChannelsTotal + 10) {
 		lg('e', "Invalid packet size of {}.", packetSize);
 		for (int i = 0; i < 4; i++) {
 			printBits((unsigned char)sampleReadBuff[2 * sizeof(__int32) + i]);
@@ -381,7 +399,7 @@ bool processRecord(char* sampleReadBuff, char* writeBuff, char* timestampBuff, c
 	}
 
 	// Run CRC
-	__int32 crcValue = CRC(sampleReadBuff);
+	__int32 crcValue = CRC(sampleReadBuff, nChannelsTotal);
 
 	if (crcValue != 0) {
 		cout << endl;
@@ -452,9 +470,9 @@ void filterSample(float val, FILTER_TYPE* filter, char* buff, int buffIndex, int
 }
 
 
-__int32 CRC(char* buff) {
+__int32 CRC(char* buff, size_t& nChannelsTotal) {
 	int recordHeaderFooterSize = 18;  // in int32
-	int recordFieldCount = recordHeaderFooterSize + NUM_CHANNELS_TOTAL;
+	int recordFieldCount = recordHeaderFooterSize + nChannelsTotal;
 	int fieldIndex = 0;
 	__int32 crcValue = 0;
 	__int32 currentField;
@@ -472,7 +490,7 @@ string makeOutputDatFilePath(const string& basePath, const string& fileType) {
 	outputPath.append("_");
 	outputPath.append(fileType);
 	outputPath.append(".dat");
-	lg('d', "Output {} file path = {}.", fileType, outputPath);
+	lg('d', "Output {} file path = \"{}\".", fileType, outputPath);
 	return outputPath;
 }
 
@@ -698,7 +716,6 @@ bool openFiles(string& iName, ifstream& iStream, streamoff& iSize, char* iBuff, 
 		}
 
 		char* buffer = new char[bufferSize];
-		//oBuffs.push_back(buffer);
 		oBuffs[i] = buffer;
 		oStreams[i].rdbuf()->pubsetbuf(buffer, bufferSize);
 	}
@@ -710,6 +727,41 @@ bool openFiles(string& iName, ifstream& iStream, streamoff& iSize, char* iBuff, 
 		}
 	}
 	return true;
+}
+
+template <typename T> bool getRawHeaderInfo(ifstream& stream, string fieldName, T& val, const T defaultVal) {
+	
+	lg('d', "Scanning Nlx raw data file header for field \"{}\"...", fieldName);
+
+	size_t fieldLen = fieldName.length();
+
+	stream.seekg(0, ios::beg);
+	char buff[NBYTES_HEADER];
+	stream.read(buff, NBYTES_HEADER);
+	string header = string(buff);
+	stream.seekg(0, ios::beg);
+
+	size_t idxField = header.find(fieldName);
+	if (idxField == header.npos) {
+		lg('d', "Header field \"{}\" was not found. Using default value of {}.", fieldName, defaultVal);
+		val = defaultVal;
+		return false;
+	}
+	else {
+		size_t idxNewline = header.find('\r\n', idxField);
+		const string headerVal = header.substr(idxField + fieldLen, idxNewline - idxField - fieldLen);
+		val = string_to_type<T>(headerVal);
+		lg('d', "Header field \"{}\" value read as {}.", fieldName, val);
+		return true;
+	}
+}
+
+template <typename T> T string_to_type(const std::string &str)
+{
+	std::istringstream ss(str);
+	T num;
+	ss >> num;
+	return num;
 }
 
 

@@ -1,0 +1,15 @@
+#####################################
+# v0.2.0 2018-04-06
+#####################################
+
+- New configurable parameters: input_range, lowcut, buffer_size
+- High-pass filter changed from IIR butterworth to exponential moving average (same as Neuralynx "DCO")
+- Each run of nrd2dat now generates a log file for future reference
+- Digital IO port states are now written to an additional output binary file
+- Sample frequency, AD channel count, record size and AD-bit-volts are determined from raw file header
+
+IMPORTANT! The default low-cut frequency has been changed from 100 Hz to 0.1 Hz. This change means that
+both spike-band and lfp-band signals may be extracted from the output samples data file. The dynamic 
+range required to save the lower-frequency signal components is larger than for high frequencies, so 
+the signal must be downscaled a little more to avoid clipping. The scaling factor is determined by the 
+"input_range" parameter, which is 2000 uV by default, but can be set as an input parameter.
