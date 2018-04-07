@@ -259,11 +259,16 @@ int main(int argc, char** argv) {
 		else {
 			// Bad record: seek the next STX value.
 			// If we don't find another STX, then we're finished with the file.
-			lg('e', "Record ID {} was not successfully read.", recordCounter);
+			lg('e', "Record ID {} was not successfully read. Searching for next valid record...", recordCounter);
 			badRecordCounter++;
 			showProgress = false;
-			bool foundNext = seekNextStx(*inFileStream);
-			if (!foundNext) { break; }
+
+			// Search for the next STX, indicating the start of another record.
+			// If not found, warn user and finish reading.
+			if (!seekNextStx(*inFileStream))  {
+				lg('w', "Failed to find any more valid records in the file.");
+				break;
+			}
 		}
 		if (RECORD_LIMIT != 0 && recordCounter >= RECORD_LIMIT) { break; }
 	}
