@@ -106,6 +106,12 @@ int main(int argc, char** argv) {
 
 	cout << endl;
 
+	if (argc == 1) {
+		cout << "Invalid usage. Refer to documentation below:" << endl << endl;
+		printHelp();
+		return 0;
+	}
+
 	string inFileName;
 	try {
 		inFileName = string(argv[1]);
