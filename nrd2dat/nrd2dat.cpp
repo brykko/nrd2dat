@@ -22,7 +22,7 @@ namespace spd = spdlog;
 #define RESONANCE 1.414213562373f  // pi = lowest possible resonance
 #define SAMPLE_RATE 32000.0        // necessary for calculating filter params
 #define HPF_CUTOFF 0.1f            // set low-cut frequency for DCO filter
-#define INPUT_RANGE_UV 2000.f      // signal dynamic range
+#define INPUT_RANGE_UV 5000.f      // signal dynamic range
 #define FILTER_ORDER 4
 
 // File format consts
@@ -641,7 +641,7 @@ void printHelp() {
 	cout << "USAGE:" << endl << endl;
 	cout << "nrd2dat <raw_data_file> <channel_map_file> <options>" << endl << endl;
 	cout << "AVAILABLE OPTIONS:" << endl << endl;
-	cout << "--input_range <value>" << endl << "  specify input range of output file in microvolts (default 2000)" << endl << endl;
+	cout << "--input_range <value>" << endl << "  specify input range of output file in microvolts (default 5000)" << endl << endl;
 	cout << "--lowcut <value>" << endl << "  specify low-cut frequency of high-pass filter in Hz (default 0.1)" << endl << endl;
 	cout << "--buffer_size <value>" << endl << " specify size of IO buffers in bytes (default 65536)" << endl << endl;
 	cout << "--debug" << endl << "  display debug-level log messsages in console." << endl << endl;
