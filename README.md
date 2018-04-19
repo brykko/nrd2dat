@@ -63,5 +63,8 @@ Below is an example of a text file that can be used as the channel map argument 
 ```
 
 ### How do I get set up? ###
+There are two options:
 
-Clone the repository and open the solution file "nrd2dat2.sln" in Microsoft Visual Studio.  Build the solution to generate the executable.
+  - **Use the precompiled .exe file (easiest)**: download the file here: https://github.com/brykko/nrd2dat/blob/master/bin/nrd2dat.exe
+  
+  - **Build from source**: clone this repository and open the solution file "nrd2dat2.sln" in Microsoft Visual Studio.  Build the solution to generate the executable.
