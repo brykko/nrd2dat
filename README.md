@@ -1,6 +1,6 @@
 # README
 
-nrd2dat is a utility for converting Neuralynx raw data ".nrd" files to the flat binary ".dat" format used by spike sorting packages such as Klusta, Kilosort and Phy.  It uses buffered IO streams for fast reading and writing of large data files.  The speed of your hard drive will likely be the limiting factor for performance.  A 300 GB  .nrd file is typically processed in ~1 hour on my (fairly slow) system.  Error-checking is performed to ensure records have been read correctly from the raw data file.
+nrd2dat is a utility for converting Neuralynx raw data ".nrd" files to the flat binary ".dat" format used by spike sorting packages such as Klusta, Kilosort and Phy. AD channel samples, digital IO port values and timestamps are extracted to separate .dat files. All records are error-checked using CRC32 to ensure validity of the data.
 
 ### USAGE
 
@@ -25,9 +25,9 @@ AVAILABLE OPTIONS:
   display this text.
 ```
 
-The Neuralynx .nrd files include all available channels, given the system's input board configuration.  This converter requires a channel map indicating the numbers of the AD channels to be extracted.  Samples from these channels will be written to the .dat file in the order specified in the channel map.  The channel map must be a text file with the number of a single AD channel on each line. Any lines that are empty or  prefixed with '%' will be ignored.  See below for an example channel map.
+A Neuralynx acquisition system will save all of its AD channels to the .nrd file, regardless of which channels are actually used. nrd2dat extracts a specified subset of the AD channels, using a channel map indicating the numbers of the required channels. Samples from these channels will be written to the .dat file in the same order they are specified in the channel map.  The channel map must be a text file with the number of one AD channel on each line. Any lines that are empty or  prefixed with '%' will be ignored. See below for an example channel map file.
 
-The Neuralynx raw samples are stored with 24-bit precision, with very large dynamic range (+- 132 mV). When converting from 24-bit to 16-bit, signal values are first high-pass filtered to remove near-DC signal offsets, using a zero-phase exponential moving average filter. Next, the filtered signal values are multiplied by a fixed scaling factor determined from the "input_range" parameter which sets the dynamic range of the output 16-bit signals.
+The Neuralynx raw samples are stored with 24-bit precision, with very large dynamic range (+- 132 mV). When converting the AD signals to the 16-bit output format, signal values are first high-pass filtered to remove near-DC signal offsets, using a zero-phase exponential moving average filter (the same as the 'DCO' high-pass filter used in Cheetah). Next, the filtered signal values are multiplied by a fixed scaling factor determined from the "input_range" parameter, which determines the dynamic range of the output 16-bit signals.
 
 ### OUTPUT FILES
 Three headerless .dat files are generated, with names based on the input raw data file:
