@@ -641,11 +641,11 @@ void printHelp() {
 	cout << "USAGE:" << endl << endl;
 	cout << "nrd2dat <raw_data_file> <channel_map_file> <options>" << endl << endl;
 	cout << "AVAILABLE OPTIONS:" << endl << endl;
-	cout << "--input_range <value>" << endl << "  specify input range of output file in microvolts (default 5000)" << endl << endl;
-	cout << "--lowcut <value>" << endl << "  specify low-cut frequency of high-pass filter in Hz (default 0.1)" << endl << endl;
-	cout << "--buffer_size <value>" << endl << " specify size of IO buffers in bytes (default 65536)" << endl << endl;
-	cout << "--debug" << endl << "  display debug-level log messsages in console." << endl << endl;
-	cout << "--help" << endl << "  display this text." << endl;
+	cout << "--input_range (-i) <value>" << endl << "  specify input range of output file in microvolts (default 5000)." << endl << endl;
+	cout << "--lowcut (-l) <value>" << endl << "  specify low-cut frequency of high-pass filter in Hz (default 0.1)." << endl << endl;
+	cout << "--buffer_size (-b) <value>" << endl << " specify size of IO buffers in bytes (default 65536)." << endl << endl;
+	cout << "--debug (-d)" << endl << "  display debug-level log messsages in console." << endl << endl;
+	cout << "--help (-h)" << endl << "  display this text and exit." << endl;
 	cout << "===========================================================" << endl << endl;
 }
 
@@ -787,11 +787,11 @@ bool parseArgs(int argc, char** argv, bool& debugMode, bool& helpFlag, float& hp
 		string prm = argv[i];
 
 		// No-argument switches
-		if (prm == "--debug") {
+		if (prm == "--debug" || prm == "-d") {
 			loggerConsole->set_level(spd::level::debug);
 			i++;
 			continue;
-		} else if (prm == "--help") {
+		} else if (prm == "--help" || prm == "-h") {
 			printHelp();
 			return 0;
 		}
@@ -804,9 +804,9 @@ bool parseArgs(int argc, char** argv, bool& debugMode, bool& helpFlag, float& hp
 
 		const char* val = argv[i + 1];
 
-		if      (prm == "--lowcut")      { hpfLowCutFreq = getNumericArg<float>(val, prm, 0.1, 15000, "Hz"); }
-		else if (prm == "--input_range") { inputRangeUv = getNumericArg<float>(val, prm, 1, numeric_limits<float>::max(), "uV"); }
-		else if (prm == "--buffer_size") { bufferSize = getNumericArg<int>(val, prm, 1, numeric_limits<int>::max(), "bytes"); }
+		if      (prm == "--lowcut" || prm == "-l")      { hpfLowCutFreq = getNumericArg<float>(val, prm, 0.1, 15000, "Hz"); }
+		else if (prm == "--input_range" || prm == "-i") { inputRangeUv = getNumericArg<float>(val, prm, 1, numeric_limits<float>::max(), "uV"); }
+		else if (prm == "--buffer_size" || prm == "-b") { bufferSize = getNumericArg<int>(val, prm, 1, numeric_limits<int>::max(), "bytes"); }
 		else { lg('e', "Invalid optional argument \"{}\".", prm); return 0; }
 		i += 2;
 	}

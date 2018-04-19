@@ -9,20 +9,20 @@ nrd2dat <raw_data_file> <channel_map_file> <options>
 
 AVAILABLE OPTIONS:
 
---input_range <value>
-  specify input range of output file in microvolts (default 2000)
+--input_range (-i) <value>
+  specify input range of output file in microvolts (default 2000).
 
---lowcut <value>
-  specify low-cut frequency of high-pass filter in Hz (default 0.1)
+--lowcut (-l) <value>
+  specify low-cut frequency of high-pass filter in Hz (default 0.1).
 
---buffer_size <value>
- specify size of IO buffers in bytes (default 65536)
+--buffer_size (-b) <value>
+ specify size of IO buffers in bytes (default 65536).
 
---debug
+--debug (-d)
   display debug-level log messsages in console.
 
---help
-  display this text.
+--help (-h)
+  display this text and exit.
 ```
 
 A Neuralynx acquisition system will save all of its AD channels to the .nrd file, regardless of which channels are actually used. nrd2dat extracts a specified subset of the AD channels, using a channel map indicating the numbers of the required channels. Samples from these channels will be written to the .dat file in the same order they are specified in the channel map.  The channel map must be a text file with the number of one AD channel on each line. Any lines that are empty or  prefixed with '%' will be ignored. See below for an example channel map file.
